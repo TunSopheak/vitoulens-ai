@@ -1,9 +1,14 @@
 .vitoulens-popup-root {
   color-scheme: light;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   margin: 0;
   background: #f7f8fc;
   color: #172033;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 }
 
 .vitoulens-popup-root .popup {
@@ -17,7 +22,7 @@
   font-size: 24px;
 }
 
-.vitoulens-popup-root p {
+.vitoulens-popup-root .tagline {
   margin: 0 0 20px;
   color: #566078;
   line-height: 1.5;
@@ -26,16 +31,6 @@
 .vitoulens-popup-root .actions {
   display: grid;
   gap: 10px;
-}
-
-.vitoulens-popup-root .result {
-  margin: 16px 0 0;
-  padding: 12px;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #172033;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
 }
 
 .vitoulens-popup-root button {
@@ -54,7 +49,115 @@
   background: #284bb5;
 }
 
+.vitoulens-popup-root .secondary-button {
+  border-color: #d7ddea;
+  background: #ffffff;
+  color: #39445d;
+}
+
+.vitoulens-popup-root .secondary-button:hover {
+  background: #eef1f8;
+}
+
 .vitoulens-popup-root button:focus-visible {
   outline: 3px solid rgba(50, 91, 214, 0.3);
   outline-offset: 2px;
+}
+
+.vitoulens-popup-root .result {
+  margin: 16px 0 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+
+.vitoulens-translated-block {
+  font-family:
+    "Kantumruy Pro",
+    "Khmer OS Siemreap",
+    "Khmer OS Siem Reap",
+    "Noto Sans Khmer",
+    sans-serif !important;
+  line-height: 1.8 !important;
+  letter-spacing: normal !important;
+  text-rendering: optimizeLegibility !important;
+}
+
+.vitoulens-translating-block {
+  opacity: 0.55 !important;
+  transition: opacity 160ms ease !important;
+}
+
+
+.vitoulens-page-controller {
+  position: fixed !important;
+  right: 22px !important;
+  bottom: 22px !important;
+  z-index: 2147483647 !important;
+
+  box-sizing: border-box !important;
+  display: grid !important;
+  gap: 8px !important;
+
+  width: min(320px, calc(100vw - 32px)) !important;
+  padding: 16px !important;
+
+  border: 1px solid #d8e0f5 !important;
+  border-radius: 14px !important;
+
+  background: #ffffff !important;
+  color: #172033 !important;
+
+  box-shadow:
+    0 16px 40px rgba(23, 32, 51, 0.18) !important;
+
+  font-family:
+    "Kantumruy Pro",
+    "Khmer OS Siemreap",
+    "Khmer OS Siem Reap",
+    "Noto Sans Khmer",
+    system-ui,
+    sans-serif !important;
+
+  text-align: left !important;
+}
+
+.vitoulens-controller-brand {
+  color: #325bd6 !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  line-height: 1.4 !important;
+}
+
+.vitoulens-controller-status {
+  color: #566078 !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+}
+
+.vitoulens-controller-stop {
+  box-sizing: border-box !important;
+  width: 100% !important;
+  padding: 9px 12px !important;
+
+  border: 1px solid #d7ddea !important;
+  border-radius: 8px !important;
+
+  background: #f7f8fc !important;
+  color: #273249 !important;
+
+  font: inherit !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+
+  cursor: pointer !important;
+}
+
+.vitoulens-controller-stop:hover {
+  background: #e9edf7 !important;
 }

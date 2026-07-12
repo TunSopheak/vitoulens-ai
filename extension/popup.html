@@ -6,16 +6,42 @@
     <title>VitouLens AI</title>
     <link rel="stylesheet" href="styles.css">
   </head>
+
   <body class="vitoulens-popup-root">
     <main class="popup">
       <h1>VitouLens AI</h1>
-      <p>Read English. Understand in Khmer. Learn faster.</p>
+
+      <p class="tagline">
+        Read English. Understand in Khmer. Learn faster.
+      </p>
+
       <div class="actions">
-        <button type="button" id="translate-selection">Translate Selected Text</button>
-        <button type="button" id="translate-page">Translate Current Page</button>
+        <button type="button" id="translate-selection">
+          Translate Selected Text
+        </button>
+
+        <button type="button" id="translate-page">
+          Translate Current Page
+        </button>
+
+        <button
+          type="button"
+          id="stop-translation"
+          class="secondary-button"
+        >
+          Stop & Restore English
+        </button>
       </div>
-      <p class="result" id="selection-result" role="status" aria-live="polite" hidden></p>
+
+      <p
+        class="result"
+        id="selection-result"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></p>
     </main>
+
     <script src="popup.js"></script>
   </body>
 </html>
