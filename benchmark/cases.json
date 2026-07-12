@@ -1,0 +1,62 @@
+[
+  {
+    "id": "web-01",
+    "domain": "Web Development",
+    "text": "A web browser sends an HTTP request to a web server. The server processes the request, accesses a database, and returns an HTTP response to the browser."
+  },
+  {
+    "id": "oop-01",
+    "domain": "Object-Oriented Programming",
+    "text": "A class is a blueprint for creating objects. Each object can contain data in variables and behavior in methods."
+  },
+  {
+    "id": "api-01",
+    "domain": "Backend and API",
+    "text": "FastAPI uses Dependency Injection to provide database connections and other dependencies to an endpoint."
+  },
+  {
+    "id": "database-01",
+    "domain": "Database",
+    "text": "A primary key uniquely identifies each record in a database table, while a foreign key creates a relationship between two tables."
+  },
+  {
+    "id": "sql-01",
+    "domain": "SQL",
+    "text": "The SQL query joins the users and orders tables, filters the results, and sorts them by creation date."
+  },
+  {
+    "id": "network-01",
+    "domain": "Computer Networking",
+    "text": "A router forwards packets between networks, while a switch connects devices inside the same local network."
+  },
+  {
+    "id": "network-02",
+    "domain": "Computer Networking",
+    "text": "The application connects to the server through port 8080. A firewall rule controls whether the network traffic is allowed."
+  },
+  {
+    "id": "git-01",
+    "domain": "Git and GitHub",
+    "text": "Git tracks changes in source code. Developers create a branch, commit their work, and open a pull request on GitHub."
+  },
+  {
+    "id": "javascript-01",
+    "domain": "JavaScript",
+    "text": "An asynchronous function can wait for a Promise without blocking the rest of the JavaScript application."
+  },
+  {
+    "id": "ai-01",
+    "domain": "Artificial Intelligence",
+    "text": "A machine learning model learns patterns from training data and uses those patterns to make predictions on new data."
+  },
+  {
+    "id": "security-01",
+    "domain": "Web Security",
+    "text": "HTTPS encrypts communication between the browser and the server, helping protect passwords and other sensitive information."
+  },
+  {
+    "id": "data-structure-01",
+    "domain": "Data Structures",
+    "text": "A stack follows the last-in, first-out principle, while a queue processes elements in first-in, first-out order."
+  }
+]

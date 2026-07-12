@@ -222,3 +222,6 @@ backend/models/
 
 # Generated benchmark results
 benchmark/results/
+
+# Local VS Code settings
+.vscode/
