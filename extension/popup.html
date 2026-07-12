@@ -10,12 +10,32 @@
     <main class="popup">
       <h1>VitouLens AI</h1>
       <p>Read English. Understand in Khmer. Learn faster.</p>
+      <fieldset class="mode-selector">
+        <legend>Translation Mode</legend>
+        <div class="mode-options">
+          <label class="mode-option">
+            <input type="radio" name="translation-mode" value="basic" checked>
+            <span>
+              <strong>Basic</strong>
+              <small>Local / Offline</small>
+            </span>
+          </label>
+          <label class="mode-option">
+            <input type="radio" name="translation-mode" value="smart">
+            <span>
+              <strong>Smart</strong>
+              <small>Context-aware AI</small>
+            </span>
+          </label>
+        </div>
+      </fieldset>
       <div class="actions">
         <button type="button" id="translate-selection">Translate Selected Text</button>
-        <button type="button" id="translate-page">Translate Current Page</button>
+        <button type="button" id="translate-page" hidden>Translate Current Page</button>
       </div>
       <p class="result" id="selection-result" role="status" aria-live="polite" hidden></p>
     </main>
+    <script src="popup-logic.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
