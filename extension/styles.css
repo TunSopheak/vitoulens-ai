@@ -28,6 +28,16 @@
   gap: 10px;
 }
 
+.vitoulens-popup-root .result {
+  margin: 16px 0 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172033;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .vitoulens-popup-root button {
   width: 100%;
   padding: 11px 14px;
