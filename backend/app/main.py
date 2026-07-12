@@ -79,7 +79,7 @@ class ProcessBatchRequest(BaseModel):
         min_length=1,
         max_length=200,
     )
-    mode: Literal["basic"] = "basic"
+    mode: Literal["basic", "smart"] = "basic"
     domain: str = "Computer Science"
 
     @field_validator("items")
@@ -152,12 +152,29 @@ def process_batch(
     ],
 ) -> dict[str, object]:
     try:
-        translations = service.translate_basic_many(
-            [
-                item.text
-                for item in request.items
-            ]
-        )
+        texts = [
+            item.text
+            for item in request.items
+        ]
+
+        if request.mode == "smart":
+            translations = service.translate_smart_many(
+                texts,
+                request.domain,
+            )
+        else:
+            translations = service.translate_basic_many(
+                texts
+            )
+
+        if len(translations) != len(request.items):
+            if request.mode == "smart":
+                raise SmartTranslationRejectedError
+
+            raise TranslationServiceError(
+                "Basic batch translation returned "
+                "an unexpected item count."
+            )
 
         results: list[dict[str, str]] = []
 
@@ -166,14 +183,19 @@ def process_batch(
             translations,
             strict=True,
         ):
-            processed_text = translation.get(
-                "processed_text"
+            translated_text = translation.get(
+                "translation"
+                if request.mode == "smart"
+                else "processed_text"
             )
 
             if (
-                not isinstance(processed_text, str)
-                or not processed_text.strip()
+                not isinstance(translated_text, str)
+                or not translated_text.strip()
             ):
+                if request.mode == "smart":
+                    raise SmartTranslationRejectedError
+
                 raise TranslationServiceError(
                     "Basic batch translation returned "
                     "an invalid result."
@@ -182,15 +204,25 @@ def process_batch(
             results.append(
                 {
                     "id": item.id,
-                    "translation": processed_text,
+                    "translation": translated_text,
                 }
             )
 
-        return {
-            "mode": "basic",
-            "engine": MODEL_NAME,
+        response: dict[str, object] = {
+            "mode": request.mode,
+            "engine": (
+                translations[0]["engine"]
+                if request.mode == "smart"
+                else MODEL_NAME
+            ),
             "results": results,
         }
+
+        if request.mode == "smart":
+            response["validation_passed"] = True
+
+        return response
+
     except TerminologyError as exc:
         raise HTTPException(
             status_code=500,
@@ -199,12 +231,39 @@ def process_batch(
                 "is unavailable."
             ),
         ) from exc
+
     except TranslationServiceError as exc:
         raise HTTPException(
             status_code=503,
             detail=(
                 "Basic translation service "
                 "is unavailable."
+            ),
+        ) from exc
+
+    except SmartModeUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Smart translation is not configured."
+            ),
+        ) from exc
+
+    except SmartTranslationRejectedError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Smart translation output "
+                "failed validation."
+            ),
+        ) from exc
+
+    except SmartTranslationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Smart translation service "
+                "request failed."
             ),
         ) from exc
 
