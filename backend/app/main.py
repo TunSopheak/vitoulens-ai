@@ -1,37 +1,41 @@
-from fastapi import FastAPI, HTTPException
+from typing import Annotated, Literal
+
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 
-from .terminology import (
-    TerminologyError,
-    load_technical_terms,
-    protect_technical_terms,
-    restore_technical_terms,
+from .terminology import TerminologyError
+from .translation_service import (
+    SmartModeUnavailableError,
+    SmartTranslationError,
+    SmartTranslationRejectedError,
+    TranslationOrchestrator,
+    translation_orchestrator,
 )
-from .translator import (
-    TranslationServiceError,
-    cleanup_final_output,
-    translator_service,
-)
+from .translator import TranslationServiceError
 
 
 class ProcessTextRequest(BaseModel):
     text: str
+    mode: Literal["basic", "smart"] = "basic"
+    domain: str = "Computer Science"
 
     @field_validator("text")
     @classmethod
     def text_must_not_be_blank(cls, value: str) -> str:
         if not value.strip():
-            raise ValueError(
-                "Text must not be empty or whitespace only."
-            )
+            raise ValueError("Text must not be empty or whitespace only.")
+        return value
+
+    @field_validator("domain")
+    @classmethod
+    def domain_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Domain must not be empty or whitespace only.")
         return value
 
 
-app = FastAPI(
-    title="VitouLens AI",
-    version="0.1.0",
-)
+app = FastAPI(title="VitouLens AI", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -55,69 +59,44 @@ async def health() -> dict[str, str]:
     return {"status": "healthy"}
 
 
+def get_translation_orchestrator() -> TranslationOrchestrator:
+    return translation_orchestrator
+
+
 @app.post("/process-text")
 def process_text(
     request: ProcessTextRequest,
+    service: Annotated[
+        TranslationOrchestrator,
+        Depends(get_translation_orchestrator),
+    ],
 ) -> dict[str, object]:
     try:
-        terms = load_technical_terms()
-
-        (
-            protected_text,
-            placeholders,
-            detected_terms,
-        ) = protect_technical_terms(
-            request.text,
-            terms,
-        )
+        if request.mode == "smart":
+            return service.translate_smart(request.text, request.domain)
+        return service.translate_basic(request.text)
     except TerminologyError as exc:
         raise HTTPException(
             status_code=500,
-            detail=str(exc),
+            detail="Terminology configuration is unavailable.",
         ) from exc
-
-    try:
-        translation = translator_service.translate_with_details(
-            protected_text,
-            placeholders.keys(),
-        )
     except TranslationServiceError as exc:
         raise HTTPException(
             status_code=503,
-            detail=str(exc),
+            detail="Basic translation service is unavailable.",
         ) from exc
-
-    processed_text = cleanup_final_output(
-        restore_technical_terms(
-            translation.text,
-            placeholders,
-        )
-    )
-
-    detected_term_names = [
-        detected.term
-        for detected in detected_terms
-    ]
-
-    term_policies: list[dict[str, str]] = []
-
-    for detected in detected_terms:
-        policy = {
-            "term": detected.term,
-            "action": detected.action,
-        }
-
-        if detected.preferred_khmer is not None:
-            policy["preferred_khmer"] = (
-                detected.preferred_khmer
-            )
-
-        term_policies.append(policy)
-
-    return {
-        "original_text": request.text,
-        "processed_text": processed_text,
-        "detected_terms": detected_term_names,
-        "term_policies": term_policies,
-        "status": "translated",
-    }
+    except SmartModeUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Smart translation is not configured.",
+        ) from exc
+    except SmartTranslationRejectedError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Smart translation output failed validation.",
+        ) from exc
+    except SmartTranslationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Smart translation service request failed.",
+        ) from exc
