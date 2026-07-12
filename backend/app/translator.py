@@ -156,63 +156,217 @@ class NLLBTranslatorService:
 
         return protected_sentence, surrogates
 
-    def translate_with_details(
-        self, text: str, placeholders: Iterable[str] = ()
-    ) -> TranslationResult:
-        protected_placeholders = tuple(placeholders)
-        sentence_parts, separators = self._split_sentences(text)
-        sentence_indexes = [
-            index for index, sentence in enumerate(sentence_parts) if sentence.strip()
+    def translate_many_with_details(
+        self,
+        items: list[tuple[str, Iterable[str]]],
+    ) -> list[TranslationResult]:
+        normalized_items = [
+            (
+                text,
+                tuple(placeholders),
+            )
+            for text, placeholders in items
         ]
-        if not sentence_indexes:
-            return TranslationResult(text=text, sentence_count=0, fallback_used=False)
+
+        if not normalized_items:
+            return []
+
+        item_sentence_parts: list[list[str]] = []
+        item_separators: list[list[str]] = []
+        item_sentence_counts: list[int] = []
+        item_fallback_used = [
+            False
+            for _ in normalized_items
+        ]
 
         prepared_sentences: list[str] = []
-        sentence_surrogates: list[dict[str, str]] = []
-        for index in sentence_indexes:
-            prepared, surrogates = self._add_surrogates(
-                sentence_parts[index].strip(), protected_placeholders
+
+        sentence_contexts: list[
+            tuple[
+                int,
+                int,
+                str,
+                dict[str, str],
+            ]
+        ] = []
+
+        for item_index, (
+            text,
+            protected_placeholders,
+        ) in enumerate(normalized_items):
+            sentence_parts, separators = (
+                self._split_sentences(text)
             )
-            prepared_sentences.append(prepared)
-            sentence_surrogates.append(surrogates)
 
-        translated_sentences = self._translate_batch(prepared_sentences)
-        fallback_used = False
+            sentence_indexes = [
+                index
+                for index, sentence in enumerate(
+                    sentence_parts
+                )
+                if sentence.strip()
+            ]
 
-        for index, source, translated, surrogates in zip(
-            sentence_indexes,
-            prepared_sentences,
+            item_sentence_parts.append(
+                sentence_parts
+            )
+
+            item_separators.append(
+                separators
+            )
+
+            item_sentence_counts.append(
+                len(sentence_indexes)
+            )
+
+            for sentence_index in sentence_indexes:
+                prepared, surrogates = (
+                    self._add_surrogates(
+                        sentence_parts[
+                            sentence_index
+                        ].strip(),
+                        protected_placeholders,
+                    )
+                )
+
+                prepared_sentences.append(
+                    prepared
+                )
+
+                sentence_contexts.append(
+                    (
+                        item_index,
+                        sentence_index,
+                        prepared,
+                        surrogates,
+                    )
+                )
+
+        translated_sentences = (
+            self._translate_batch(
+                prepared_sentences
+            )
+            if prepared_sentences
+            else []
+        )
+
+        for (
+            (
+                item_index,
+                sentence_index,
+                source,
+                surrogates,
+            ),
+            translated,
+        ) in zip(
+            sentence_contexts,
             translated_sentences,
-            sentence_surrogates,
+            strict=True,
         ):
             markers_intact = all(
-                translated.count(surrogate) == 1 for surrogate in surrogates
+                translated.count(surrogate) == 1
+                for surrogate in surrogates
             )
+
             if not markers_intact:
-                fallback_used = True
+                item_fallback_used[
+                    item_index
+                ] = True
+
                 continue
 
             restored_sentence = translated
-            for surrogate, placeholder in surrogates.items():
-                restored_sentence = restored_sentence.replace(surrogate, placeholder)
-            restored_sentence = self._clean_output(restored_sentence)
-            sentence_parts[index] = self._preserve_terminal_punctuation(
-                source, restored_sentence
+
+            for (
+                surrogate,
+                placeholder,
+            ) in surrogates.items():
+                restored_sentence = (
+                    restored_sentence.replace(
+                        surrogate,
+                        placeholder,
+                    )
+                )
+
+            restored_sentence = (
+                self._clean_output(
+                    restored_sentence
+                )
             )
 
-        rebuilt_text = "".join(
-            sentence
-            + (separators[index] if index < len(separators) else "")
-            for index, sentence in enumerate(sentence_parts)
-        )
-        return TranslationResult(
-            text=self._clean_output(rebuilt_text),
-            sentence_count=len(sentence_indexes),
-            fallback_used=fallback_used,
-        )
+            item_sentence_parts[
+                item_index
+            ][sentence_index] = (
+                self._preserve_terminal_punctuation(
+                    source,
+                    restored_sentence,
+                )
+            )
 
-    def translate(self, text: str, placeholders: Iterable[str] = ()) -> str:
-        return self.translate_with_details(text, placeholders).text
+        results: list[TranslationResult] = []
+
+        for item_index, sentence_parts in enumerate(
+            item_sentence_parts
+        ):
+            separators = item_separators[
+                item_index
+            ]
+
+            rebuilt_text = "".join(
+                sentence
+                + (
+                    separators[index]
+                    if index < len(separators)
+                    else ""
+                )
+                for index, sentence in enumerate(
+                    sentence_parts
+                )
+            )
+
+            results.append(
+                TranslationResult(
+                    text=self._clean_output(
+                        rebuilt_text
+                    ),
+                    sentence_count=(
+                        item_sentence_counts[
+                            item_index
+                        ]
+                    ),
+                    fallback_used=(
+                        item_fallback_used[
+                            item_index
+                        ]
+                    ),
+                )
+            )
+
+        return results
+
+    def translate_with_details(
+        self,
+        text: str,
+        placeholders: Iterable[str] = (),
+    ) -> TranslationResult:
+        return self.translate_many_with_details(
+            [
+                (
+                    text,
+                    placeholders,
+                )
+            ]
+        )[0]
+
+    def translate(
+        self,
+        text: str,
+        placeholders: Iterable[str] = (),
+    ) -> str:
+        return self.translate_with_details(
+            text,
+            placeholders,
+        ).text
+
 
 
 def cleanup_final_output(text: str) -> str:

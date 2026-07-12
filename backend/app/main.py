@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .terminology import TerminologyError
 from .translation_service import (
@@ -12,7 +12,10 @@ from .translation_service import (
     TranslationOrchestrator,
     translation_orchestrator,
 )
-from .translator import TranslationServiceError
+from .translator import (
+    MODEL_NAME,
+    TranslationServiceError,
+)
 
 
 class ProcessTextRequest(BaseModel):
@@ -32,6 +35,82 @@ class ProcessTextRequest(BaseModel):
     def domain_must_not_be_blank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("Domain must not be empty or whitespace only.")
+        return value
+
+
+
+class ProcessBatchItem(BaseModel):
+    id: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+    text: str = Field(
+        min_length=1,
+        max_length=5000,
+    )
+
+    @field_validator("id")
+    @classmethod
+    def id_must_not_be_blank(
+        cls,
+        value: str,
+    ) -> str:
+        if not value.strip():
+            raise ValueError(
+                "Batch item ID must not be blank."
+            )
+        return value
+
+    @field_validator("text")
+    @classmethod
+    def text_must_not_be_blank(
+        cls,
+        value: str,
+    ) -> str:
+        if not value.strip():
+            raise ValueError(
+                "Batch item text must not be blank."
+            )
+        return value
+
+
+class ProcessBatchRequest(BaseModel):
+    items: list[ProcessBatchItem] = Field(
+        min_length=1,
+        max_length=200,
+    )
+    mode: Literal["basic"] = "basic"
+    domain: str = "Computer Science"
+
+    @field_validator("items")
+    @classmethod
+    def item_ids_must_be_unique(
+        cls,
+        value: list[ProcessBatchItem],
+    ) -> list[ProcessBatchItem]:
+        item_ids = [
+            item.id
+            for item in value
+        ]
+
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError(
+                "Batch item IDs must be unique."
+            )
+
+        return value
+
+    @field_validator("domain")
+    @classmethod
+    def domain_must_not_be_blank(
+        cls,
+        value: str,
+    ) -> str:
+        if not value.strip():
+            raise ValueError(
+                "Domain must not be empty "
+                "or whitespace only."
+            )
         return value
 
 
@@ -61,6 +140,73 @@ async def health() -> dict[str, str]:
 
 def get_translation_orchestrator() -> TranslationOrchestrator:
     return translation_orchestrator
+
+
+
+@app.post("/process-batch")
+def process_batch(
+    request: ProcessBatchRequest,
+    service: Annotated[
+        TranslationOrchestrator,
+        Depends(get_translation_orchestrator),
+    ],
+) -> dict[str, object]:
+    try:
+        translations = service.translate_basic_many(
+            [
+                item.text
+                for item in request.items
+            ]
+        )
+
+        results: list[dict[str, str]] = []
+
+        for item, translation in zip(
+            request.items,
+            translations,
+            strict=True,
+        ):
+            processed_text = translation.get(
+                "processed_text"
+            )
+
+            if (
+                not isinstance(processed_text, str)
+                or not processed_text.strip()
+            ):
+                raise TranslationServiceError(
+                    "Basic batch translation returned "
+                    "an invalid result."
+                )
+
+            results.append(
+                {
+                    "id": item.id,
+                    "translation": processed_text,
+                }
+            )
+
+        return {
+            "mode": "basic",
+            "engine": MODEL_NAME,
+            "results": results,
+        }
+    except TerminologyError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Terminology configuration "
+                "is unavailable."
+            ),
+        ) from exc
+    except TranslationServiceError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Basic translation service "
+                "is unavailable."
+            ),
+        ) from exc
 
 
 @app.post("/process-text")
