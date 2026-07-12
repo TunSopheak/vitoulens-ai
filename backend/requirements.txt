@@ -3,3 +3,4 @@ uvicorn[standard]
 ctranslate2
 transformers[torch]
 sentencepiece
+google-genai
