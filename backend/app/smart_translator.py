@@ -1,4 +1,5 @@
 import html
+import json
 import time
 from collections.abc import Callable
 from typing import Any
@@ -11,6 +12,8 @@ from .translator import cleanup_final_output
 
 
 SMART_MODEL = "gemini-3.1-flash-lite"
+SMART_BATCH_MAX_ITEMS = 8
+SMART_BATCH_MAX_CHARACTERS = 6000
 
 SMART_MODE_SYSTEM_INSTRUCTION = """
 You are the Smart translation engine for VitouLens AI.
@@ -42,6 +45,23 @@ Rules:
 12. Use natural Khmer sentence structure and readable punctuation.
 13. Return only the translated content.
 """.strip()
+
+
+SMART_BATCH_SYSTEM_INSTRUCTION = (
+    SMART_MODE_SYSTEM_INSTRUCTION.replace(
+        "13. Return only the translated content.",
+        (
+            "13. Return only valid JSON matching the "
+            "requested batch schema.\n"
+            "14. Keep semantic tags inside each translation "
+            "string exactly.\n"
+            "15. Translate every batch item independently.\n"
+            "16. Preserve every batch item id and item order "
+            "exactly."
+        ),
+    )
+)
+
 
 
 def normalize_action(action: Any) -> str:
@@ -125,6 +145,362 @@ def restore_gemini_semantic_tags(
     for semantic_tag, placeholder in tag_map.items():
         restored_output = restored_output.replace(semantic_tag, placeholder)
     return restored_output
+
+
+def chunk_smart_texts(
+    texts: list[str],
+    *,
+    max_items: int = SMART_BATCH_MAX_ITEMS,
+    max_characters: int = SMART_BATCH_MAX_CHARACTERS,
+) -> list[list[tuple[int, str]]]:
+    if max_items < 1:
+        raise ValueError(
+            "Smart batch max_items must be positive."
+        )
+
+    if max_characters < 1:
+        raise ValueError(
+            "Smart batch max_characters must be positive."
+        )
+
+    chunks: list[list[tuple[int, str]]] = []
+    current_chunk: list[tuple[int, str]] = []
+    current_characters = 0
+
+    for item_index, text in enumerate(texts):
+        item_characters = len(text)
+
+        should_flush = (
+            current_chunk
+            and (
+                len(current_chunk) >= max_items
+                or (
+                    current_characters
+                    + item_characters
+                    > max_characters
+                )
+            )
+        )
+
+        if should_flush:
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_characters = 0
+
+        current_chunk.append(
+            (
+                item_index,
+                text,
+            )
+        )
+
+        current_characters += item_characters
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
+
+
+def translate_many_with_gemini(
+    client: Any,
+    texts: list[str],
+    domain: str,
+    terms: list[Any],
+    *,
+    model: str = SMART_MODEL,
+    retry_count: int = 3,
+    sleep: Callable[[float], None] = time.sleep,
+    max_items: int = SMART_BATCH_MAX_ITEMS,
+    max_characters: int = SMART_BATCH_MAX_CHARACTERS,
+) -> dict[str, Any]:
+    chunks = chunk_smart_texts(
+        texts,
+        max_items=max_items,
+        max_characters=max_characters,
+    )
+
+    started = time.perf_counter()
+
+    results: list[dict[str, Any]] = []
+    validation_issues: list[str] = []
+    raw_outputs: list[str] = []
+
+    for chunk_index, chunk in enumerate(chunks):
+        contexts: list[dict[str, Any]] = []
+        source_items: list[dict[str, str]] = []
+
+        for item_index, source_text in chunk:
+            (
+                protected_text,
+                placeholders,
+                detected_terms,
+            ) = protect_technical_terms(
+                source_text,
+                terms,
+            )
+
+            (
+                gemini_text,
+                tag_map,
+                semantic_tags,
+            ) = make_gemini_semantic_tags(
+                protected_text,
+                placeholders,
+                detected_terms,
+            )
+
+            contexts.append(
+                {
+                    "item_index": item_index,
+                    "source_text": source_text,
+                    "placeholders": placeholders,
+                    "tag_map": tag_map,
+                    "semantic_tags": semantic_tags,
+                    "detected_terms": build_term_policies(
+                        detected_terms
+                    ),
+                    "protected_source": gemini_text,
+                }
+            )
+
+            source_items.append(
+                {
+                    "id": str(item_index),
+                    "source": gemini_text,
+                }
+            )
+
+        prompt = (
+            f"Technical domain: {domain}\n\n"
+            "Translate every source item independently "
+            "into Khmer.\n"
+            "Return only valid JSON with exactly this shape:\n"
+            '{"items":[{"id":"same source id",'
+            '"translation":"translated content"}]}\n'
+            "Return one result for every source item, "
+            "in the same order.\n"
+            "Preserve every id exactly.\n\n"
+            "Source items:\n"
+            + json.dumps(
+                {
+                    "items": source_items,
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        raw_output = ""
+
+        for attempt in range(retry_count):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=(
+                            SMART_BATCH_SYSTEM_INSTRUCTION
+                        ),
+                        temperature=0.1,
+                        max_output_tokens=4096,
+                    ),
+                )
+
+                raw_output = (
+                    response.text or ""
+                ).strip()
+
+                if not raw_output:
+                    raise RuntimeError(
+                        "Gemini returned an empty "
+                        "batch response."
+                    )
+
+                break
+
+            except Exception:
+                if attempt == retry_count - 1:
+                    raise
+
+                sleep(
+                    2 ** (attempt + 1)
+                )
+
+        raw_outputs.append(raw_output)
+
+        try:
+            parsed_output = json.loads(raw_output)
+        except json.JSONDecodeError:
+            validation_issues.append(
+                f"chunk_{chunk_index}:"
+                "invalid_batch_json"
+            )
+            break
+
+        returned_items = (
+            parsed_output.get("items")
+            if isinstance(parsed_output, dict)
+            else None
+        )
+
+        if (
+            not isinstance(returned_items, list)
+            or len(returned_items) != len(contexts)
+        ):
+            validation_issues.append(
+                f"chunk_{chunk_index}:"
+                "invalid_batch_structure"
+            )
+            break
+
+        valid_item_schema = all(
+            isinstance(item, dict)
+            and set(item) == {
+                "id",
+                "translation",
+            }
+            and isinstance(item.get("id"), str)
+            and isinstance(
+                item.get("translation"),
+                str,
+            )
+            for item in returned_items
+        )
+
+        if not valid_item_schema:
+            validation_issues.append(
+                f"chunk_{chunk_index}:"
+                "invalid_batch_item_schema"
+            )
+            break
+
+        expected_ids = [
+            str(context["item_index"])
+            for context in contexts
+        ]
+
+        returned_ids = [
+            item["id"]
+            for item in returned_items
+        ]
+
+        if returned_ids != expected_ids:
+            validation_issues.append(
+                f"chunk_{chunk_index}:"
+                "batch_item_ids_or_order_mismatch"
+            )
+            break
+
+        for context, returned_item in zip(
+            contexts,
+            returned_items,
+            strict=True,
+        ):
+            raw_translation = (
+                returned_item["translation"].strip()
+            )
+
+            tag_validation = validate_raw_tags(
+                raw_translation,
+                context["tag_map"],
+            )
+
+            restored_semantic_tags = (
+                restore_gemini_semantic_tags(
+                    raw_translation,
+                    context["tag_map"],
+                )
+            )
+
+            candidate_output = cleanup_final_output(
+                restore_technical_terms(
+                    restored_semantic_tags,
+                    context["placeholders"],
+                )
+            )
+
+            output_validation = validate_final_output(
+                context["source_text"],
+                candidate_output,
+            )
+
+            item_issues = (
+                tag_validation["issues"]
+                + output_validation["issues"]
+            )
+
+            item_validation_passed = not item_issues
+
+            if item_issues:
+                validation_issues.extend(
+                    (
+                        f"item_{context['item_index']}:"
+                        f"{issue}"
+                    )
+                    for issue in item_issues
+                )
+
+            results.append(
+                {
+                    "item_index": context["item_index"],
+                    "output": (
+                        candidate_output
+                        if item_validation_passed
+                        else None
+                    ),
+                    "rejected_output": (
+                        None
+                        if item_validation_passed
+                        else candidate_output
+                    ),
+                    "raw_output": raw_translation,
+                    "protected_source": (
+                        context["protected_source"]
+                    ),
+                    "validation_passed": (
+                        item_validation_passed
+                    ),
+                    "validation_issues": item_issues,
+                    "tag_check_passed": (
+                        tag_validation["passed"]
+                    ),
+                    "tag_validation": tag_validation,
+                    "output_validation": output_validation,
+                    "semantic_tags": (
+                        context["semantic_tags"]
+                    ),
+                    "detected_terms": (
+                        context["detected_terms"]
+                    ),
+                }
+            )
+
+    if (
+        len(results) != len(texts)
+        and not validation_issues
+    ):
+        validation_issues.append(
+            "batch_result_count_mismatch"
+        )
+
+    elapsed = time.perf_counter() - started
+
+    return {
+        "results": results,
+        "validation_passed": (
+            not validation_issues
+            and len(results) == len(texts)
+            and all(
+                item["validation_passed"]
+                for item in results
+            )
+        ),
+        "validation_issues": validation_issues,
+        "chunk_count": len(chunks),
+        "processed_chunk_count": len(raw_outputs),
+        "time_seconds": round(elapsed, 3),
+        "raw_outputs": raw_outputs,
+    }
 
 
 def translate_with_gemini(
