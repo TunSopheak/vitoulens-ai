@@ -4,12 +4,21 @@ const {
   BLOCK_SELECTOR,
   EXCLUDED_SELECTOR,
   MIN_BLOCK_TEXT_LENGTH,
+  MAX_PAGE_BLOCKS,
   normalizeBlockText,
   isCandidateText,
   buildBatchItems,
+  mapBatchTranslations,
 } = globalThis.VitouLensContentLogic;
 
 const originalBlocks = new Map();
+
+let translationSession = 0;
+let translationRunning = false;
+
+let controller = null;
+let controllerStatus = null;
+let controllerButton = null;
 
 
 function getContentRoot() {
@@ -88,7 +97,12 @@ function getCandidateBlocks(
 
 
 function createPageTranslationPlan() {
-  const blocks = getCandidateBlocks();
+  const candidateBlocks = getCandidateBlocks();
+
+  const blocks = candidateBlocks.slice(
+    0,
+    MAX_PAGE_BLOCKS,
+  );
 
   const items = buildBatchItems(
     blocks.map((block) => (
@@ -99,6 +113,10 @@ function createPageTranslationPlan() {
   return {
     blocks,
     items,
+    candidateCount: candidateBlocks.length,
+    truncated: (
+      candidateBlocks.length > blocks.length
+    ),
   };
 }
 
@@ -118,6 +136,31 @@ function saveOriginalBlock(element) {
 function saveOriginalBlocks(blocks) {
   for (const block of blocks) {
     saveOriginalBlock(block);
+  }
+}
+
+
+function markBlocksBusy(blocks) {
+  for (const block of blocks) {
+    block.classList.add(
+      "vitoulens-translating-block"
+    );
+
+    block.setAttribute(
+      "aria-busy",
+      "true",
+    );
+  }
+}
+
+
+function clearBlocksBusy(blocks) {
+  for (const block of blocks) {
+    block.classList.remove(
+      "vitoulens-translating-block"
+    );
+
+    block.removeAttribute("aria-busy");
   }
 }
 
@@ -156,7 +199,101 @@ function applyBlockTranslation(
 }
 
 
+function createController() {
+  if (
+    controller
+    && document.contains(controller)
+  ) {
+    return;
+  }
+
+  controller = document.createElement(
+    "section"
+  );
+
+  controller.className = (
+    "vitoulens-page-controller"
+  );
+
+  controller.setAttribute(
+    "data-vitoulens-generated",
+    "true",
+  );
+
+  const brand = document.createElement(
+    "strong"
+  );
+
+  brand.className = (
+    "vitoulens-controller-brand"
+  );
+
+  brand.textContent = "VitouLens AI";
+
+  controllerStatus = document.createElement(
+    "span"
+  );
+
+  controllerStatus.className = (
+    "vitoulens-controller-status"
+  );
+
+  controllerButton = document.createElement(
+    "button"
+  );
+
+  controllerButton.type = "button";
+
+  controllerButton.className = (
+    "vitoulens-controller-stop"
+  );
+
+  controllerButton.addEventListener(
+    "click",
+    () => {
+      restoreOriginalPage();
+    }
+  );
+
+  controller.append(
+    brand,
+    controllerStatus,
+    controllerButton,
+  );
+
+  document.documentElement.appendChild(
+    controller
+  );
+}
+
+
+function updateController(
+  message,
+  completed = false,
+) {
+  createController();
+
+  controllerStatus.textContent = message;
+
+  controllerButton.textContent = completed
+    ? "Restore English"
+    : "Stop & Restore English";
+}
+
+
+function removeController() {
+  controller?.remove();
+
+  controller = null;
+  controllerStatus = null;
+  controllerButton = null;
+}
+
+
 function restoreOriginalPage() {
+  translationSession += 1;
+  translationRunning = false;
+
   let restoredCount = 0;
 
   for (const [element, original] of originalBlocks) {
@@ -186,8 +323,190 @@ function restoreOriginalPage() {
   }
 
   originalBlocks.clear();
+  removeController();
 
   return restoredCount;
+}
+
+
+function yieldToPage() {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+
+async function runPageTranslation(
+  plan,
+  mode,
+) {
+  translationRunning = true;
+
+  const currentSession = (
+    ++translationSession
+  );
+
+  const {
+    blocks,
+    items,
+    candidateCount,
+    truncated,
+  } = plan;
+
+  const total = blocks.length;
+
+  saveOriginalBlocks(blocks);
+  markBlocksBusy(blocks);
+
+  updateController(
+    `Translating 0 of ${total} blocks...`
+  );
+
+  let result;
+
+  try {
+    result = await chrome.runtime.sendMessage({
+      type: "TRANSLATE_BATCH",
+      items,
+      mode,
+    });
+  } catch (_error) {
+    result = {
+      ok: false,
+      error: (
+        "VitouLens translation service failed."
+      ),
+    };
+  }
+
+  if (currentSession !== translationSession) {
+    return;
+  }
+
+  if (!result?.ok) {
+    clearBlocksBusy(blocks);
+    originalBlocks.clear();
+
+    translationRunning = false;
+
+    updateController(
+      result?.error ?? "Translation failed.",
+      true,
+    );
+
+    return;
+  }
+
+  let translations;
+
+  try {
+    translations = mapBatchTranslations(
+      items,
+      result.results,
+    );
+  } catch (_error) {
+    restoreOriginalPage();
+
+    updateController(
+      (
+        "VitouLens received an invalid "
+        + "batch translation response."
+      ),
+      true,
+    );
+
+    return;
+  }
+
+  let translatedCount = 0;
+
+  for (
+    let index = 0;
+    index < blocks.length;
+    index += 1
+  ) {
+    if (
+      currentSession !== translationSession
+    ) {
+      return;
+    }
+
+    applyBlockTranslation(
+      blocks[index],
+      translations[index].translation,
+    );
+
+    translatedCount += 1;
+
+    updateController(
+      (
+        `Translating ${translatedCount} `
+        + `of ${total} blocks...`
+      )
+    );
+
+    await yieldToPage();
+  }
+
+  if (currentSession !== translationSession) {
+    return;
+  }
+
+  translationRunning = false;
+
+  const completionMessage = truncated
+    ? (
+      `Translated ${translatedCount} of `
+      + `${candidateCount} detected blocks.`
+    )
+    : `Translated ${translatedCount} blocks.`;
+
+  updateController(
+    completionMessage,
+    true,
+  );
+}
+
+
+function startPageTranslation(mode) {
+  if (translationRunning) {
+    return {
+      started: false,
+      message: (
+        "Page translation is already running."
+      ),
+    };
+  }
+
+  const plan = createPageTranslationPlan();
+
+  if (!plan.blocks.length) {
+    return {
+      started: false,
+      message: (
+        "No English learning content was found."
+      ),
+    };
+  }
+
+  runPageTranslation(
+    plan,
+    mode,
+  ).catch(() => {
+    restoreOriginalPage();
+
+    updateController(
+      "VitouLens page translation failed.",
+      true,
+    );
+  });
+
+  return {
+    started: true,
+    blockCount: plan.blocks.length,
+    candidateCount: plan.candidateCount,
+    truncated: plan.truncated,
+  };
 }
 
 
@@ -204,6 +523,17 @@ chrome.runtime.onMessage.addListener(
       sendResponse({
         selectedText,
       });
+
+      return;
+    }
+
+    if (
+      message?.type
+      === "TRANSLATE_CURRENT_PAGE"
+    ) {
+      sendResponse(
+        startPageTranslation(message.mode)
+      );
 
       return;
     }

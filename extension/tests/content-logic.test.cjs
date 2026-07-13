@@ -7,6 +7,7 @@ const {
   normalizeBlockText,
   isCandidateText,
   buildBatchItems,
+  mapBatchTranslations,
 } = require("../content-logic.js");
 
 
@@ -102,5 +103,99 @@ test("batch items preserve text order with deterministic IDs", () => {
         text: "Second English block.",
       },
     ],
+  );
+});
+
+
+test("batch translations map by exact item order", () => {
+  const items = buildBatchItems([
+    "First English block.",
+    "Second English block.",
+  ]);
+
+  assert.deepEqual(
+    mapBatchTranslations(
+      items,
+      [
+        {
+          id: "block-0",
+          translation: " ប្លុកទីមួយ។ ",
+        },
+        {
+          id: "block-1",
+          translation: "ប្លុកទីពីរ។",
+        },
+      ],
+    ),
+    [
+      {
+        id: "block-0",
+        translation: "ប្លុកទីមួយ។",
+      },
+      {
+        id: "block-1",
+        translation: "ប្លុកទីពីរ។",
+      },
+    ],
+  );
+});
+
+
+test("changed batch translation order is rejected", () => {
+  const items = buildBatchItems([
+    "First English block.",
+    "Second English block.",
+  ]);
+
+  assert.throws(
+    () => mapBatchTranslations(
+      items,
+      [
+        {
+          id: "block-1",
+          translation: "ប្លុកទីពីរ។",
+        },
+        {
+          id: "block-0",
+          translation: "ប្លុកទីមួយ។",
+        },
+      ],
+    ),
+    /result is invalid/,
+  );
+});
+
+
+test("blank batch translation is rejected", () => {
+  const items = buildBatchItems([
+    "First English block.",
+  ]);
+
+  assert.throws(
+    () => mapBatchTranslations(
+      items,
+      [
+        {
+          id: "block-0",
+          translation: "   ",
+        },
+      ],
+    ),
+    /result is invalid/,
+  );
+});
+
+
+test("page batch cannot exceed 200 blocks", () => {
+  assert.throws(
+    () => buildBatchItems(
+      Array.from(
+        { length: 201 },
+        (_, index) => (
+          `English learning block ${index}.`
+        ),
+      )
+    ),
+    /batch is too large/,
   );
 });
